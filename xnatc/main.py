@@ -10,11 +10,11 @@ from urllib.parse import urlparse
 import xnat
 
 HIERARCHY = [
-    "xnat",
-    "project",
-    "subject",
-    "experiment",
-    "scan",
+    ["xnat"],
+    ["project"],
+    ["subject"],
+    ["experiment"],
+    ["scan", "assessor"],
 ]
 
 def label(obj):
@@ -49,10 +49,12 @@ def main():
     parser.add_argument('--subject', help='Subject ID')
     parser.add_argument('--experiment', help='Experiment ID')
     parser.add_argument('--scan', help='Scan ID')
+    parser.add_argument('--assessor', help='Assessor ID')
     parser.add_argument('--download', help='Download data to named directory')
     parser.add_argument('--user', help='XNAT user name. If not specified will use credentials from $HOME.netrc or prompt for username')
     parser.add_argument('--password', help='XNAT password. If not specified will use credentials from $HOME.netrc or prompt for password')
     parser.add_argument('--recurse', action="store_true", help='Recursively list contents of selected object')
+    parser.add_argument('--nifti', action="store_true", help='Download NIFTI files in preference to DICOM')
     args = parser.parse_args()
 
     get_auth(args)
@@ -64,32 +66,46 @@ def main():
             if check.lower() not in ("y", "yes"):
                 sys.exit(0)
 
-        process(connection, args, 0)
-        if args.download:
-            print("Data downloaded to %s", args.download)
+        if args.scan and args.assessor:
+            raise ValueError("Can't specify both a scan and an assessor")
+        elif args.scan:
+            args.assessor = "skip"
+        elif args.assessor:
+            args.scan = "skip"
 
-def process(obj, args, hierarchy_idx, indent="", recurse=True):
-    obj_type = HIERARCHY[hierarchy_idx]
+        process(connection, args, HIERARCHY[0][0], 0)
+        if args.download:
+            print("Data downloaded to %s" % args.download)
+
+def process(obj, args, obj_type, hierarchy_idx, indent="", recurse=True):
     print("%s%s: %s" % (indent, obj_type.capitalize(), label(obj)))
 
     if hierarchy_idx == len(HIERARCHY)-1:
-        # At the bottom level, i.e. scan
+        # At the bottom level, i.e. scan/assessor
         if args.download:
-            if 'DICOM' in obj.resources:
-                obj.resources["DICOM"].download_dir(args.download)
+            if args.nifti:
+                formats = ['NIFTI', 'DICOM']
             else:
-                print("WARNING: Scan %s does not have any associated DICOM data" % label(obj))
+                formats = ['DICOM', 'NIFTI']
+            if formats[0] in obj.resources:
+                obj.resources[formats[0]].download_dir(args.download)
+            elif formats[1] in obj.resources:
+                obj.resources[formats[1]].download_dir(args.download)
+            else:
+                print("WARNING: %s %s does not have any associated DICOM or NIFTI data" % (obj_type.capitalize(), label(obj)))
     else:
-        child_type = HIERARCHY[hierarchy_idx+1]
-        children = getattr(obj, child_type + "s")
-        child_id = getattr(args, child_type)
-        if child_id:
-            process(children[child_id], args, hierarchy_idx+1, indent+"  ", recurse=recurse)
-        elif not children:
-            print("%s - No %ss found" % (indent, child_type))
-        elif recurse:
-            for child in children.values():
-                process(child, args, hierarchy_idx+1, indent+"  ", recurse=args.recurse and not args.download)
+        for child_type in HIERARCHY[hierarchy_idx+1]:
+            children = getattr(obj, child_type + "s")
+            child_id = getattr(args, child_type)
+            if child_id == "skip":
+                continue
+            elif child_id:
+                process(children[child_id], args, child_type, hierarchy_idx+1, indent+"  ", recurse=recurse)
+            elif not children:
+                print("%s - No %ss found" % (indent, child_type))
+            elif recurse:
+                for child in children.values():
+                    process(child, args, child_type, hierarchy_idx+1, indent+"  ", recurse=args.recurse and not args.download)
 
 if __name__ == '__main__':
     main()
