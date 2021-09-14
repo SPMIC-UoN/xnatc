@@ -4,6 +4,7 @@ xnatc - Command line interface to XNAT
 import argparse
 import getpass
 import netrc
+import os
 import sys
 from urllib.parse import urlparse
 
@@ -51,6 +52,9 @@ def main():
     parser.add_argument('--scan', help='Scan ID')
     parser.add_argument('--assessor', help='Assessor ID')
     parser.add_argument('--download', help='Download data to named directory')
+    parser.add_argument('--upload', help='Upload data to an assessor')
+    parser.add_argument('--upload-type', help='Data type to upload data - if not specified will try to autodetect')
+    parser.add_argument('--upload-name', help='Name to give uploaded data - defaults to file basename')
     parser.add_argument('--user', help='XNAT user name. If not specified will use credentials from $HOME.netrc or prompt for username')
     parser.add_argument('--password', help='XNAT password. If not specified will use credentials from $HOME.netrc or prompt for password')
     parser.add_argument('--recurse', action="store_true", help='Recursively list contents of selected object')
@@ -93,6 +97,23 @@ def process(obj, args, obj_type, hierarchy_idx, indent="", recurse=True):
                 obj.resources[formats[1]].download_dir(args.download)
             else:
                 print("WARNING: %s %s does not have any associated DICOM or NIFTI data" % (obj_type.capitalize(), label(obj)))
+        if args.upload:
+            if not args.upload_type and (args.upload.lower().endswith(".nii") or args.upload.lower().endswith(".nii.gz")):
+                args.upload_type = 'NIFTI'
+            else:
+                print("WARNING: unrecognized resource %s - will not upload")
+
+            if args.upload_type not in obj.resources:
+                resource = obj.xnat_session.classes.ResourceCatalog(parent=obj, label=args.upload_type)
+            else:
+                resource = obj.resources[args.upload_type]
+            
+            if not args.upload_name:
+                args.upload_name = os.path.basename(args.upload)
+
+            resource.upload(args.upload, os.path.basename(args.upload))
+            print("%s - Uploaded %s as %s" % (indent, args.upload, args.upload_name))
+            
     else:
         for child_type in HIERARCHY[hierarchy_idx+1]:
             children = getattr(obj, child_type + "s")
