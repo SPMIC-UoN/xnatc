@@ -69,7 +69,6 @@ def main():
             check = input("WARNING: download requested for multiple experiment - are you sure? ")
             if check.lower() not in ("y", "yes"):
                 sys.exit(0)
-
         if args.scan and args.assessor:
             raise ValueError("Can't specify both a scan and an assessor")
         elif args.scan:
@@ -77,6 +76,8 @@ def main():
         elif args.assessor:
             args.scan = "skip"
 
+        if args.download:
+            args.recurse = True
         process(connection, args, HIERARCHY[0][0], 0)
         if args.download:
             print("Data downloaded to %s" % args.download)
@@ -126,7 +127,7 @@ def process(obj, args, obj_type, hierarchy_idx, indent="", recurse=True):
                 print("%s - No %ss found" % (indent, child_type))
             elif recurse:
                 for child in children.values():
-                    process(child, args, child_type, hierarchy_idx+1, indent+"  ", recurse=args.recurse and not args.download)
+                    process(child, args, child_type, hierarchy_idx+1, indent+"  ", recurse=args.recurse or args.download)
 
 if __name__ == '__main__':
     main()
