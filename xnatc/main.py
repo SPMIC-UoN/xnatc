@@ -6,9 +6,13 @@ import getpass
 import netrc
 import os
 import sys
+import tempfile
 from urllib.parse import urlparse
+import zipfile
 
 import xnat
+
+from . import bids
 
 HIERARCHY = [
     ["xnat"],
@@ -43,22 +47,44 @@ def get_auth(args):
         print("  Note: You can add your credentials to $HOME/.netrc for automatic login")
         print("        See https://xnat.readthedocs.io/en/latest/static/tutorial.html#credentials")
 
+def download_xnat(resource, args):
+    outdir = os.path.join(args.download, args.cur_project, args.cur_subject, args.cur_experiment, args.cur_scan)
+    os.makedirs(outdir)
+    with tempfile.TemporaryDirectory() as d:
+        fname = os.path.join(d, "res.zip")
+        resource.download(fname)
+        archive = zipfile.ZipFile(fname)
+        for name in archive.namelist():
+            with open(os.path.join(outdir, os.path.basename(name)), "wb") as outfile:
+                contents = archive.open(name)
+                outfile.write(contents.read())
+
+def get_downloader(format):
+    if format == "xnat":
+        return download_xnat
+    elif format == "bids":
+        return bids.download_bids
+    else:
+        raise ValueError("Unrecognized download format: %s" % format)
+
 def main():
     parser = argparse.ArgumentParser(description='Command line interface to XNAT')
     parser.add_argument('--xnat', default='https://xnatpriv.nottingham.ac.uk/', help='xnat host URL')
+    parser.add_argument('--user', help='XNAT user name. If not specified will use credentials from $HOME.netrc or prompt for username')
+    parser.add_argument('--password', help='XNAT password. If not specified will use credentials from $HOME.netrc or prompt for password')
     parser.add_argument('--project', help='Project ID')
     parser.add_argument('--subject', help='Subject ID')
     parser.add_argument('--experiment', help='Experiment ID')
     parser.add_argument('--scan', help='Scan ID')
     parser.add_argument('--assessor', help='Assessor ID')
+    parser.add_argument('--resource', help='Name of resource to download', default='DICOM')
     parser.add_argument('--download', help='Download data to named directory')
+    parser.add_argument('--download-format', help='Download format', default="xnat", choices=["xnat", "bids"])
+    parser.add_argument('--bids-mapper', help='BIDS mapper', default="default")
     parser.add_argument('--upload', help='Upload data to an assessor')
     parser.add_argument('--upload-type', help='Data type to upload data - if not specified will try to autodetect')
     parser.add_argument('--upload-name', help='Name to give uploaded data - defaults to file basename')
-    parser.add_argument('--user', help='XNAT user name. If not specified will use credentials from $HOME.netrc or prompt for username')
-    parser.add_argument('--password', help='XNAT password. If not specified will use credentials from $HOME.netrc or prompt for password')
     parser.add_argument('--recurse', action="store_true", help='Recursively list contents of selected object')
-    parser.add_argument('--nifti', action="store_true", help='Download NIFTI files in preference to DICOM')
     args = parser.parse_args()
 
     get_auth(args)
@@ -78,26 +104,28 @@ def main():
 
         if args.download:
             args.recurse = True
+            args.downloader = get_downloader(args.download_format)
+            if args.download_format == "bids" and not args.resource == "NIFTI":
+                print("WARNING: Setting download resource to NIFTI as required for BIDS")
+                args.resource = "NIFTI"
+
         process(connection, args, HIERARCHY[0][0], 0)
         if args.download:
             print("Data downloaded to %s" % args.download)
 
 def process(obj, args, obj_type, hierarchy_idx, indent="", recurse=True):
     print("%s%s: %s" % (indent, obj_type.capitalize(), label(obj)))
+    setattr(args, "cur_" + obj_type, label(obj))
 
     if hierarchy_idx == len(HIERARCHY)-1:
         # At the bottom level, i.e. scan/assessor
         if args.download:
-            if args.nifti:
-                formats = ['NIFTI', 'DICOM']
+            if args.resource in obj.resources:
+                res = obj.resources[args.resource]
+                args.downloader(res, args)
             else:
-                formats = ['DICOM', 'NIFTI']
-            if formats[0] in obj.resources:
-                obj.resources[formats[0]].download_dir(args.download)
-            elif formats[1] in obj.resources:
-                obj.resources[formats[1]].download_dir(args.download)
-            else:
-                print("WARNING: %s %s does not have any associated DICOM or NIFTI data" % (obj_type.capitalize(), label(obj)))
+                print("WARNING: %s %s does not have an associated resource named %s" % (obj_type.capitalize(), label(obj), args.resource))
+
         if args.upload:
             if not args.upload_type and (args.upload.lower().endswith(".nii") or args.upload.lower().endswith(".nii.gz")):
                 args.upload_type = 'NIFTI'
