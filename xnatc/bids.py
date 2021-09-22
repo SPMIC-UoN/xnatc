@@ -1,81 +1,93 @@
+"""
+Functions used to transform downloaded data into BIDS format
+"""
 import json
 import os
+import re
 import tempfile
 import zipfile
+
+# Matchers return tuple of (subfolder, suffix, dict of additional filename attributes, dict of json updates)
+# or None if file did not match
 
 def match_anat(fname, json_data):
     """
     Match anatomical images
     """
-    fname = None
+    folder, suffix, attrs, md = "anat", None, {}, {}
     desc = json_data["SeriesDescription"].lower()
     if "t1" in desc:
-        fname = "T1w"
+        suffix = "T1w"
     elif "t2" in desc:
-        fname = "T2w"
+        suffix = "T2w"
 
-    if fname:
+    if suffix:
         if "NORM" in json_data["ImageType"]:
-            fname = "acq-NORM_" + fname
-        return "anat", fname
+            attrs["acq"] = "NORM"
+        return folder, suffix, attrs, md
 
 def match_func(fname, json_data):
     """
     Match functional images
     """
-    folder, fname = None, None
+    folder, suffix, attrs, md = "func", None, {}, {}
     desc = json_data["SeriesDescription"].lower()
     if "fmri" in desc:
-        folder = "func"
         if "sbref" in desc:
-            fname = "sbref"
+            suffix = "sbref"
         else:
-            fname = "bold"
+            suffix = "bold"
 
         if "resting" in desc:
-            fname = "task-rest_" + fname
+            attrs["task"] = "rest"
         elif "task" in desc:
-            fname = "task-on_" + fname
+            attrs["task"] = "task"
+            md["TaskName"] = "task"
         
-        return folder, fname
+        return folder, suffix, attrs, md
 
-def match_diff(fname, json_data):
+def match_dwi(fname, json_data):
     """
     Match DWI images
     """
-    folder, fname = None, None
+    folder, suffix, attrs, md = "dwi", None, {}, {}
     desc = json_data["SeriesDescription"].lower()
     if "diff" in desc:
-        folder = "dwi"
         if "sbref" in desc:
-            fname = "sbref"
+            suffix = "sbref"
         else:
-            fname = "dwi"
+            suffix = "dwi"
 
-        return folder, fname
+        return folder, suffix, attrs, md
 
 def match_swi(fname, json_data):
     """
     Match SWI images
     """
-    folder, fname = None, None
+    folder, suffix, attrs, md = "swi", None, {}, {}
     desc = json_data["SeriesDescription"].lower()
     if "swi" in desc:
-        folder = "swi"
         if "sbref" in desc:
-            fname = "sbref"
+            suffix = "sbref"
         else:
-            fname = "swi"
+            suffix = "swi"
 
         if "EchoNumber" in json_data:
-            fname = "echo-%i_" % json_data["EchoNumber"] + fname 
+            attrs["echo"] = json_data["EchoNumber"]
 
-        return folder, fname
+        pattern = re.compile(".*coil(\d+).*")
+        match= pattern.match(fname.lower())
+        if match:
+            coil = int(match.group(1))
+            attrs["coil"] = coil
+
+        return folder, suffix, attrs, md
 
 DEFAULT_MATCHER = [
     match_anat,
     match_func,
-    match_diff,
+    match_dwi,
+    match_swi,
 ]
 
 def download_bids(resource, args):
@@ -117,11 +129,12 @@ def download_bids(resource, args):
             for matcher in bids_mapper:
                 bids_match = matcher(imgname, json_data)
                 if bids_match:
-                    bids_subdir, bids_fname = bids_match
-                    os.makedirs(os.path.join(outdir, bids_subdir), exist_ok=True)
+                    folder, suffix, attrs, md = bids_match
+                    bids_fname = "_".join(["%s-%s" % (k, v) for k, v in attrs.items()]) + "_" + suffix
+                    os.makedirs(os.path.join(outdir, folder), exist_ok=True)
                     for ext in EXTS:
                         src_fname = os.path.join(outdir, imgname + ext)
-                        dest_fname = os.path.join(outdir, bids_subdir, "sub-%s_ses-%s_%s%s" % (bids_subject, bids_session, bids_fname, ext))
+                        dest_fname = os.path.join(outdir, folder, "sub-%s_ses-%s_%s%s" % (bids_subject, bids_session, bids_fname, ext))
                         if os.path.exists(src_fname):
                             os.rename(src_fname, dest_fname)
                     found = True
