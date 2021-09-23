@@ -2,9 +2,11 @@
 xnatc - Command line interface to XNAT
 """
 import argparse
+import fnmatch
 import getpass
 import netrc
 import os
+import re
 import sys
 import tempfile
 from urllib.parse import urlparse
@@ -48,6 +50,9 @@ def get_auth(args):
         print("        See https://xnat.readthedocs.io/en/latest/static/tutorial.html#credentials")
 
 def download_xnat(resource, args):
+    """
+    Download resource in 'XNAT' structure - i.e. directory tree of project/subject/experiment/scan/
+    """
     outdir = os.path.join(args.download, args.cur_project, args.cur_subject, args.cur_experiment, args.cur_scan)
     os.makedirs(outdir)
     with tempfile.TemporaryDirectory() as d:
@@ -85,7 +90,10 @@ def main():
     parser.add_argument('--upload-type', help='Data type to upload data - if not specified will try to autodetect')
     parser.add_argument('--upload-name', help='Name to give uploaded data - defaults to file basename')
     parser.add_argument('--recurse', action="store_true", help='Recursively list contents of selected object')
+    parser.add_argument('--match-type', help='Type of matching', choices=['glob', 're'], default='glob')
+    parser.add_argument('--match-files', action="store_true", help='Allow subject/experiment/scan etc to be file names containing ID lists')
     args = parser.parse_args()
+    args.list_children = True
 
     get_auth(args)
 
@@ -113,7 +121,7 @@ def main():
         if args.download:
             print("Data downloaded to %s" % args.download)
 
-def process(obj, args, obj_type, hierarchy_idx, indent="", recurse=True):
+def process(obj, args, obj_type, hierarchy_idx, indent=""):
     print("%s%s: %s" % (indent, obj_type.capitalize(), label(obj)))
     setattr(args, "cur_" + obj_type, label(obj))
 
@@ -146,16 +154,32 @@ def process(obj, args, obj_type, hierarchy_idx, indent="", recurse=True):
     else:
         for child_type in HIERARCHY[hierarchy_idx+1]:
             children = getattr(obj, child_type + "s")
-            child_id = getattr(args, child_type)
-            if child_id == "skip":
-                continue
-            elif child_id:
-                process(children[child_id], args, child_type, hierarchy_idx+1, indent+"  ", recurse=recurse)
-            elif not children:
-                print("%s - No %ss found" % (indent, child_type))
-            elif recurse:
-                for child in children.values():
-                    process(child, args, child_type, hierarchy_idx+1, indent+"  ", recurse=args.recurse or args.download)
+            match_id = getattr(args, child_type)
+            for child_id, child in children.items():
+                if matches(child_id, match_id, args):
+                    process(child, args, child_type, hierarchy_idx+1, indent+"  ")
+
+def matches(child_id, match_id, args):
+    if match_id == "skip":
+        return False
+    elif match_id is None:
+        return args.recurse
+
+    if args.match_files and os.path.exists(match_id):
+        with open(match_id) as f:
+            match_ids = [l.strip() for l in f.readlines()]
+    else:
+        match_ids = [match_id]
+
+    for match_id in match_ids:
+        if args.match_type == "glob":
+            match_id = fnmatch.translate(match_id)
+
+        p = re.compile(match_id)
+        if p.match(child_id):
+            return True
+
+    return False
 
 if __name__ == '__main__':
     main()
