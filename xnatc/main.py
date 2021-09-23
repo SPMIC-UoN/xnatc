@@ -54,7 +54,7 @@ def download_xnat(resource, args):
     Download resource in 'XNAT' structure - i.e. directory tree of project/subject/experiment/scan/
     """
     outdir = os.path.join(args.download, args.cur_project, args.cur_subject, args.cur_experiment, args.cur_scan)
-    os.makedirs(outdir)
+    os.makedirs(outdir, exist_ok=True)
     with tempfile.TemporaryDirectory() as d:
         fname = os.path.join(d, "res.zip")
         resource.download(fname)
@@ -89,7 +89,6 @@ def main():
     parser.add_argument('--upload', help='Upload data to an assessor')
     parser.add_argument('--upload-type', help='Data type to upload data - if not specified will try to autodetect')
     parser.add_argument('--upload-name', help='Name to give uploaded data - defaults to file basename')
-    parser.add_argument('--recurse', action="store_true", help='Recursively list contents of selected object')
     parser.add_argument('--match-type', help='Type of matching', choices=['glob', 're'], default='glob')
     parser.add_argument('--match-files', action="store_true", help='Allow subject/experiment/scan etc to be file names containing ID lists')
     args = parser.parse_args()
@@ -111,7 +110,6 @@ def main():
             args.scan = "skip"
 
         if args.download:
-            args.recurse = True
             args.downloader = get_downloader(args.download_format)
             if args.download_format == "bids" and not args.resource == "NIFTI":
                 print("WARNING: Setting download resource to NIFTI as required for BIDS")
@@ -155,15 +153,15 @@ def process(obj, args, obj_type, hierarchy_idx, indent=""):
         for child_type in HIERARCHY[hierarchy_idx+1]:
             children = getattr(obj, child_type + "s")
             match_id = getattr(args, child_type)
-            for child_id, child in children.items():
-                if matches(child_id, match_id, args):
+            for child in children.values():
+                if matches(label(child), match_id, args):
                     process(child, args, child_type, hierarchy_idx+1, indent+"  ")
 
 def matches(child_id, match_id, args):
     if match_id == "skip":
         return False
     elif match_id is None:
-        return args.recurse
+        return True
 
     if args.match_files and os.path.exists(match_id):
         with open(match_id) as f:
