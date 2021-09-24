@@ -53,7 +53,7 @@ def download_xnat(resource, args):
     """
     Download resource in 'XNAT' structure - i.e. directory tree of project/subject/experiment/scan/
     """
-    outdir = os.path.join(args.download, args.cur_project, args.cur_subject, args.cur_experiment, args.cur_scan)
+    outdir = os.path.join(args.download, args.cur_project[0], args.cur_subject[0], args.cur_experiment[0], args.cur_scan[0])
     os.makedirs(outdir, exist_ok=True)
     with tempfile.TemporaryDirectory() as d:
         fname = os.path.join(d, "res.zip")
@@ -121,7 +121,7 @@ def main():
 
 def process(obj, args, obj_type, hierarchy_idx, indent=""):
     print("%s%s: %s" % (indent, obj_type.capitalize(), label(obj)))
-    setattr(args, "cur_" + obj_type, label(obj))
+    setattr(args, "cur_" + obj_type, (label(obj), obj))
 
     if hierarchy_idx == len(HIERARCHY)-1:
         # At the bottom level, i.e. scan/assessor

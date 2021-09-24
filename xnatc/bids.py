@@ -90,15 +90,63 @@ DEFAULT_MATCHER = [
     match_swi,
 ]
 
+def update_ptlist(bidsdir, bids_subject, subject):
+    """
+    Update participants list
+
+    FIXME no additional pt data currently written
+    """
+    pts_file = os.path.join(bidsdir, "participants.tsv")
+    if os.path.exists(pts_file):
+        with open(pts_file) as f:
+            pts = [l.strip() for l in f.readlines()]
+    else:
+        pts = ["participant_id",]
+
+    if bids_subject not in pts[1:]:
+        pts.append(bids_subject)
+        with open(pts_file, "w") as f:
+            for pt in pts:
+                f.write("%s\n" % pt)
+
+TEMPLATE_DATASET_DESC = {
+  "Name": None,
+  "BIDSVersion": "1.4.0",
+  "DatasetType": "raw",
+}
+
+def check_dataset_description(bidsdir, args):
+    """
+    Check the dataset description file exists and write it if not
+    """
+    desc_file = os.path.join(bidsdir, "dataset_description.json")
+    if not os.path.exists(desc_file):
+        dataset_desc = dict(TEMPLATE_DATASET_DESC)
+        dataset_desc["Name"] = args.cur_project[1].name
+        with open(desc_file, 'w') as f:
+            json.dump(dataset_desc, f)
+
+    readme_file = os.path.join(bidsdir, "README")
+    if not os.path.exists(readme_file):
+        readme = """This data set was downloaded from:
+    XNAT=%s
+    PROJECT=%s""" % (args.cur_xnat[0], args.cur_project[1].name)
+        with open(readme_file, 'w') as f:
+            f.write(readme)
+
 def download_bids(resource, args):
     bids_mapper = DEFAULT_MATCHER # FIXME use args.bids_mapper
 
     # BIDS does not allow hyphen or underscore in IDs
-    bids_project = args.cur_project.replace("_", "").replace("-", "")
-    bids_subject = args.cur_subject.replace("_", "").replace("-", "")
-    bids_session = args.cur_experiment.replace("_", "").replace("-", "")
-    outdir = os.path.join(args.download, bids_project, "sub-" + bids_subject, "ses-" + bids_session)
+    bids_project = args.cur_project[0].replace("_", "").replace("-", "")
+    bids_subject = "sub-" + args.cur_subject[0].replace("_", "").replace("-", "")
+    bids_session = "ses-" + args.cur_experiment[0].replace("_", "").replace("-", "")
+    bidsdir = os.path.join(args.download, bids_project)
+    outdir = os.path.join(bidsdir, bids_subject, bids_session)
     os.makedirs(outdir, exist_ok=True)
+
+    update_ptlist(bidsdir, bids_subject, args.cur_subject[1])
+    check_dataset_description(bidsdir, args)
 
     # Download the NIFTI data and metadata
     with tempfile.TemporaryDirectory() as d:
@@ -130,11 +178,11 @@ def download_bids(resource, args):
                 bids_match = matcher(imgname, json_data)
                 if bids_match:
                     folder, suffix, attrs, md = bids_match
-                    bids_fname = "_".join(["%s-%s" % (k, v) for k, v in attrs.items()]) + "_" + suffix
+                    bids_fname = "_".join(["%s-%s" % (k, v) for k, v in attrs.items()] + [suffix])
                     os.makedirs(os.path.join(outdir, folder), exist_ok=True)
                     for ext in EXTS:
                         src_fname = os.path.join(outdir, imgname + ext)
-                        dest_fname = os.path.join(outdir, folder, "sub-%s_ses-%s_%s%s" % (bids_subject, bids_session, bids_fname, ext))
+                        dest_fname = os.path.join(outdir, folder, "%s_%s_%s%s" % (bids_subject, bids_session, bids_fname, ext))
                         if os.path.exists(src_fname):
                             os.rename(src_fname, dest_fname)
                     found = True
