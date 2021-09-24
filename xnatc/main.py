@@ -98,15 +98,9 @@ def main():
 
     with xnat.connect(args.xnat, user=args.user, password=args.password) as connection:
         connection.xnat_url = args.xnat
-        if args.download and not (args.project and args.subject and args.experiment):
-            check = input("WARNING: download requested for multiple experiment - are you sure? ")
-            if check.lower() not in ("y", "yes"):
-                sys.exit(0)
-        if args.scan and args.assessor:
-            raise ValueError("Can't specify both a scan and an assessor")
-        elif args.scan:
+        if args.scan and not args.assessor:
             args.assessor = "skip"
-        elif args.assessor:
+        elif args.assessor and not args.scan:
             args.scan = "skip"
 
         if args.download:
