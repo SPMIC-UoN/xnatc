@@ -27,6 +27,8 @@ HIERARCHY = [
 def label(obj):
     if hasattr(obj, "label"):
         return obj.label
+    elif hasattr(obj, "name"):
+        return obj.name
     elif hasattr(obj, "xnat_url"):
         return obj.xnat_url
     else:
