@@ -26,13 +26,14 @@ HIERARCHY = [
 
 def label(obj):
     if hasattr(obj, "label"):
-        return obj.label
+        label = obj.label
     elif hasattr(obj, "name"):
-        return obj.name
+        label = obj.name
     elif hasattr(obj, "xnat_url"):
-        return obj.xnat_url
+        label = obj.xnat_url
     else:
-        return obj.id
+        label = obj.id
+    return label, getattr(obj, "id", label)
 
 def get_auth(args):
     if args.user and args.password:
@@ -116,8 +117,8 @@ def main():
             print("Data downloaded to %s" % args.download)
 
 def process(obj, args, obj_type, hierarchy_idx, indent=""):
-    print("%s%s: %s" % (indent, obj_type.capitalize(), label(obj)))
-    setattr(args, "cur_" + obj_type, (label(obj), obj))
+    print("%s%s: %s" % (indent, obj_type.capitalize(), label(obj)[0]))
+    setattr(args, "cur_" + obj_type, (label(obj)[0], obj))
 
     if hierarchy_idx == len(HIERARCHY)-1:
         # At the bottom level, i.e. scan/assessor
@@ -126,7 +127,7 @@ def process(obj, args, obj_type, hierarchy_idx, indent=""):
                 res = obj.resources[args.resource]
                 args.downloader(res, args)
             else:
-                print("WARNING: %s %s does not have an associated resource named %s" % (obj_type.capitalize(), label(obj), args.resource))
+                print("WARNING: %s %s does not have an associated resource named %s" % (obj_type.capitalize(), label(obj)[0], args.resource))
 
         if args.upload:
             if not args.upload_type and (args.upload.lower().endswith(".nii") or args.upload.lower().endswith(".nii.gz")):
@@ -150,8 +151,9 @@ def process(obj, args, obj_type, hierarchy_idx, indent=""):
             children = getattr(obj, child_type + "s")
             match_id = getattr(args, child_type)
             for child in children.values():
-                if matches(label(child), match_id, args):
-                    process(child, args, child_type, hierarchy_idx+1, indent+"  ")
+                for lbl in label(child):
+                    if matches(lbl, match_id, args):
+                        process(child, args, child_type, hierarchy_idx+1, indent+"  ")
 
 def matches(child_id, match_id, args):
     if match_id == "skip":
