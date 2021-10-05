@@ -91,15 +91,17 @@ def main():
     parser.add_argument('--bids-mapper', help='BIDS mapper', default="default")
     parser.add_argument('--upload', help='Upload data to an assessor')
     parser.add_argument('--upload-type', help='Data type to upload data - if not specified will try to autodetect')
+    parser.add_argument('--assessor-type', help='Assessor type to create on upload if it does not already exist', default="PipelineData")
     parser.add_argument('--upload-name', help='Name to give uploaded data - defaults to file basename')
     parser.add_argument('--match-type', help='Type of matching', choices=['glob', 're'], default='glob')
     parser.add_argument('--match-files', action="store_true", help='Allow subject/experiment/scan etc to be file names containing ID lists')
+    parser.add_argument('--debug', action="store_true", help='Enable debug mode')
     args = parser.parse_args()
     args.list_children = True
 
     get_auth(args)
 
-    with xnat.connect(args.xnat, user=args.user, password=args.password) as connection:
+    with xnat.connect(args.xnat, user=args.user, password=args.password, debug=args.debug) as connection:
         connection.xnat_url = args.xnat
         if args.scan and not args.assessor:
             args.assessor = "skip"
@@ -111,6 +113,8 @@ def main():
             if args.download_format == "bids" and not args.resource == "NIFTI":
                 print("WARNING: Setting download resource to NIFTI as required for BIDS")
                 args.resource = "NIFTI"
+        elif args.upload and (not args.project or not args.subject or not args.experiment or not (args.scan or args.assessor)):
+            raise RuntimeError("To upload data you must fully specify a project, subject, experiment and either a scan or an assessor")
 
         process(connection, args, HIERARCHY[0][0], 0)
         if args.download:
@@ -132,21 +136,24 @@ def process(obj, args, obj_type, hierarchy_idx, indent=""):
         if args.upload:
             if not args.upload_type and (args.upload.lower().endswith(".nii") or args.upload.lower().endswith(".nii.gz")):
                 args.upload_type = 'NIFTI'
-            else:
-                print("WARNING: unrecognized resource %s - will not upload")
 
-            if args.upload_type not in obj.resources:
-                resource = obj.xnat_session.classes.ResourceCatalog(parent=obj, label=args.upload_type)
-            else:
-                resource = obj.resources[args.upload_type]
-            
-            if not args.upload_name:
-                args.upload_name = os.path.basename(args.upload)
+            if args.upload_type:
+                if args.upload_type not in obj.resources:
+                    print("Creating new resource catalog")
+                    resource = obj.xnat_session.classes.ResourceCatalog(parent=obj, label=args.upload_type)
+                else:
+                    resource = obj.resources[args.upload_type]
 
-            resource.upload(args.upload, os.path.basename(args.upload))
-            print("%s - Uploaded %s as %s" % (indent, args.upload, args.upload_name))
-            
+                if not args.upload_name:
+                    args.upload_name = os.path.basename(args.upload)
+
+                resource.upload(args.upload, os.path.basename(args.upload))
+                print("%s - Uploaded %s as %s" % (indent, args.upload, args.upload_name))
+            else:
+                print("WARNING: Could not detect type of resource %s - will not upload" % args.upload)
+
     else:
+        match = False
         for child_type in HIERARCHY[hierarchy_idx+1]:
             children = getattr(obj, child_type + "s")
             match_id = getattr(args, child_type)
@@ -154,6 +161,12 @@ def process(obj, args, obj_type, hierarchy_idx, indent=""):
                 for lbl in label(child):
                     if matches(lbl, match_id, args):
                         process(child, args, child_type, hierarchy_idx+1, indent+"  ")
+                        match = True
+        if not match and args.upload and obj_type == "experiment":
+            # When uploading we may need to create the assessor if it doesn't currently exist
+            print("%s - Creating new assessor %s (%s) as currently does not exist" % (indent, args.assessor if args.assessor else args.scan, args.assessor_type))
+            assessor = getattr(obj.xnat_session.classes, args.assessor_type)(parent=obj, label=args.assessor if args.assessor else args.scan)
+            process(assessor, args, "assessor" if args.assessor else "scan", hierarchy_idx+1, indent+"  ")
 
 def matches(child_id, match_id, args):
     if match_id == "skip":
