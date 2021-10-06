@@ -75,6 +75,35 @@ def get_downloader(format):
     else:
         raise ValueError("Unrecognized download format: %s" % format)
 
+def upload_dir(obj, dirname, default_resource_type=None, indent=""):
+    print("%s - Uploading contents of %s" % (indent, dirname))
+    for fname in os.listdir(dirname):
+        fpath = os.path.join(dirname, fname)
+        if os.path.isdir(fpath):
+            for sub_fname in os.listdir(fpath):
+                sub_fpath = os.path.join(fpath, sub_fname)
+                upload_file(obj, sub_fpath, resource_type=fname, indent=indent+"  ")
+        else:
+            upload_file(obj, fpath, resource_type=default_resource_type, indent=indent+"  ")
+
+def upload_file(obj, fname, resource_type=None, upload_name=None, indent=""):
+    if not resource_type and (fname.lower().endswith(".nii") or fname.lower().endswith(".nii.gz")):
+        resource_type = 'NIFTI'
+
+    if resource_type:
+        if resource_type not in obj.resources:
+            resource = obj.xnat_session.classes.ResourceCatalog(parent=obj, label=resource_type)
+        else:
+            resource = obj.resources[resource_type]
+
+        if not upload_name:
+            upload_name = os.path.basename(fname)
+
+        resource.upload(fname, upload_name)
+        print("%s - Uploaded %s as %s/%s" % (indent, fname, resource_type, upload_name))
+    else:
+        print("WARNING: Could not detect resource type for %s - will not upload" % fname)
+
 def main():
     parser = argparse.ArgumentParser(description='Command line interface to XNAT')
     parser.add_argument('--xnat', default='https://xnatpriv.nottingham.ac.uk/', help='xnat host URL')
@@ -134,24 +163,10 @@ def process(obj, args, obj_type, hierarchy_idx, indent=""):
                 print("WARNING: %s %s does not have an associated resource named %s" % (obj_type.capitalize(), label(obj)[0], args.resource))
 
         if args.upload:
-            if not args.upload_type and (args.upload.lower().endswith(".nii") or args.upload.lower().endswith(".nii.gz")):
-                args.upload_type = 'NIFTI'
-
-            if args.upload_type:
-                if args.upload_type not in obj.resources:
-                    print("Creating new resource catalog")
-                    resource = obj.xnat_session.classes.ResourceCatalog(parent=obj, label=args.upload_type)
-                else:
-                    resource = obj.resources[args.upload_type]
-
-                if not args.upload_name:
-                    args.upload_name = os.path.basename(args.upload)
-
-                resource.upload(args.upload, os.path.basename(args.upload))
-                print("%s - Uploaded %s as %s" % (indent, args.upload, args.upload_name))
+            if os.path.isdir(args.upload):
+                upload_dir(obj, args.upload, args.upload_type, indent)
             else:
-                print("WARNING: Could not detect type of resource %s - will not upload" % args.upload)
-
+                upload_file(obj, args.upload, args.upload_type, args.upload_name, indent)
     else:
         match = False
         for child_type in HIERARCHY[hierarchy_idx+1]:
