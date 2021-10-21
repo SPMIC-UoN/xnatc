@@ -158,7 +158,10 @@ def process(obj, args, obj_type, hierarchy_idx, indent=""):
         if args.download:
             if args.resource in obj.resources:
                 res = obj.resources[args.resource]
-                args.downloader(res, args)
+                try:
+                    args.downloader(res, args)
+                except Exception as exc:
+                    print("WARNING: Failed to download resource %s from %s %s: %s" % (args.resource, obj_type.capitalize(), label(obj)[0], str(exc)))
             else:
                 print("WARNING: %s %s does not have an associated resource named %s" % (obj_type.capitalize(), label(obj)[0], args.resource))
 
