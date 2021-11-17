@@ -7,7 +7,7 @@ import getpass
 import netrc
 import os
 import re
-import sys
+import requests
 import tempfile
 from urllib.parse import urlparse
 import zipfile
@@ -109,19 +109,20 @@ def main():
     parser.add_argument('--xnat', default='https://xnatpriv.nottingham.ac.uk/', help='xnat host URL')
     parser.add_argument('--user', help='XNAT user name. If not specified will use credentials from $HOME.netrc or prompt for username')
     parser.add_argument('--password', help='XNAT password. If not specified will use credentials from $HOME.netrc or prompt for password')
-    parser.add_argument('--project', help='Project ID')
-    parser.add_argument('--subject', help='Subject ID')
-    parser.add_argument('--experiment', help='Experiment ID')
+    parser.add_argument('--project', help='Project name/ID')
+    parser.add_argument('--subject', help='Subject name/ID')
+    parser.add_argument('--experiment', help='Experiment name/ID')
     parser.add_argument('--scan', help='Scan ID')
-    parser.add_argument('--assessor', help='Assessor ID')
-    parser.add_argument('--resource', help='Name of resource to download', default='DICOM')
+    parser.add_argument('--assessor', help='Assessor name/ID')
     parser.add_argument('--download', help='Download data to named directory')
+    parser.add_argument('--download-resource', help='Name of resource type to download', default='DICOM')
     parser.add_argument('--download-format', help='Download format', default="xnat", choices=["xnat", "bids"])
-    parser.add_argument('--bids-mapper', help='BIDS mapper', default="default")
-    parser.add_argument('--upload', help='Upload data to an assessor')
-    parser.add_argument('--upload-type', help='Data type to upload data - if not specified will try to autodetect')
-    parser.add_argument('--assessor-type', help='Assessor type to create on upload if it does not already exist', default="PipelineData")
+    #parser.add_argument('--bids-mapper', help='BIDS mapper', default="default")
+    parser.add_argument('--upload', help='File or directory containing data to upload to a scan/assessor')
+    parser.add_argument('--upload-resource', help='Resource type for uploaded data - if not specified will try to autodetect from file type')
     parser.add_argument('--upload-name', help='Name to give uploaded data - defaults to file basename')
+    parser.add_argument('--assessor-type', help='Assessor type to create on upload if it does not already exist', default="PipelineData")
+    parser.add_argument('--assessor-xml', help='File containing XML definition of assessor to create')
     parser.add_argument('--match-type', help='Type of matching', choices=['glob', 're'], default='glob')
     parser.add_argument('--match-files', action="store_true", help='Allow subject/experiment/scan etc to be file names containing ID lists')
     parser.add_argument('--debug', action="store_true", help='Enable debug mode')
@@ -139,9 +140,9 @@ def main():
 
         if args.download:
             args.downloader = get_downloader(args.download_format)
-            if args.download_format == "bids" and not args.resource == "NIFTI":
+            if args.download_format == "bids" and not args.download_resource == "NIFTI":
                 print("WARNING: Setting download resource to NIFTI as required for BIDS")
-                args.resource = "NIFTI"
+                args.download_resource = "NIFTI"
         elif args.upload and (not args.project or not args.subject or not args.experiment or not (args.scan or args.assessor)):
             raise RuntimeError("To upload data you must fully specify a project, subject, experiment and either a scan or an assessor")
 
@@ -156,20 +157,26 @@ def process(obj, args, obj_type, hierarchy_idx, indent=""):
     if hierarchy_idx == len(HIERARCHY)-1:
         # At the bottom level, i.e. scan/assessor
         if args.download:
-            if args.resource in obj.resources:
-                res = obj.resources[args.resource]
+            if args.download_resource in obj.resources:
+                res = obj.resources[args.download_resource]
                 try:
                     args.downloader(res, args)
                 except Exception as exc:
-                    print("WARNING: Failed to download resource %s from %s %s: %s" % (args.resource, obj_type.capitalize(), label(obj)[0], str(exc)))
+                    print("WARNING: Failed to download resource %s from %s %s: %s" % (args.download_resource, obj_type.capitalize(), label(obj)[0], str(exc)))
             else:
-                print("WARNING: %s %s does not have an associated resource named %s" % (obj_type.capitalize(), label(obj)[0], args.resource))
+                print("WARNING: %s %s does not have an associated resource named %s" % (obj_type.capitalize(), label(obj)[0], args.download_resource))
 
         if args.upload:
             if os.path.isdir(args.upload):
-                upload_dir(obj, args.upload, args.upload_type, indent)
+                upload_dir(obj, args.upload, args.upload_resource, indent)
             else:
-                upload_file(obj, args.upload, args.upload_type, args.upload_name, indent)
+                upload_file(obj, args.upload, args.upload_resource, args.upload_name, indent)
+    elif args.assessor_xml and obj_type == "experiment":
+        # We have been asked to create an assessor using the given XML document
+        # Unfortunately xnat_session.post doesn't seem to handle files? So use requests directly
+        print("%s - Creating new assessor using XML: %s" % (indent, args.assessor_xml))
+        with open(args.assessor_xml) as xmldata:
+            requests.post("%s/%s/assessors" % (args.xnat, obj.uri), files={"file" : xmldata})
     else:
         match = False
         for child_type in HIERARCHY[hierarchy_idx+1]:
