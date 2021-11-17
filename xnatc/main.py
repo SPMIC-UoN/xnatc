@@ -121,8 +121,8 @@ def main():
     parser.add_argument('--upload', help='File or directory containing data to upload to a scan/assessor')
     parser.add_argument('--upload-resource', help='Resource type for uploaded data - if not specified will try to autodetect from file type')
     parser.add_argument('--upload-name', help='Name to give uploaded data - defaults to file basename')
-    parser.add_argument('--assessor-type', help='Assessor type to create on upload if it does not already exist', default="PipelineData")
-    parser.add_argument('--assessor-xml', help='File containing XML definition of assessor to create')
+    #parser.add_argument('--assessor-type', help='Assessor type to create on upload if it does not already exist', default="PipelineData")
+    parser.add_argument('--create-assessor', help='File containing XML definition of assessor to create')
     parser.add_argument('--match-type', help='Type of matching', choices=['glob', 're'], default='glob')
     parser.add_argument('--match-files', action="store_true", help='Allow subject/experiment/scan etc to be file names containing ID lists')
     parser.add_argument('--debug', action="store_true", help='Enable debug mode')
@@ -171,11 +171,11 @@ def process(obj, args, obj_type, hierarchy_idx, indent=""):
                 upload_dir(obj, args.upload, args.upload_resource, indent)
             else:
                 upload_file(obj, args.upload, args.upload_resource, args.upload_name, indent)
-    elif args.assessor_xml and obj_type == "experiment":
+    elif args.create_assessor and obj_type == "experiment":
         # We have been asked to create an assessor using the given XML document
         # Unfortunately xnat_session.post doesn't seem to handle files? So use requests directly
-        print("%s - Creating new assessor using XML: %s" % (indent, args.assessor_xml))
-        with open(args.assessor_xml) as xmldata:
+        print("%s - Creating new assessor using XML: %s" % (indent, args.create_assessor))
+        with open(args.create_assessor) as xmldata:
             requests.post("%s/%s/assessors" % (args.xnat, obj.uri), files={"file" : xmldata})
     else:
         match = False
