@@ -180,6 +180,7 @@ def process(obj, args, obj_type, hierarchy_idx, indent=""):
                     if matches(lbl, match_id, args):
                         process(child, args, child_type, hierarchy_idx+1, indent+"  ")
                         match = True
+                        break
         if not match and args.upload and obj_type == "experiment":
             # When uploading we may need to create the assessor if it doesn't currently exist
             print("%s - Creating new assessor %s (%s) as currently does not exist" % (indent, args.assessor if args.assessor else args.scan, args.assessor_type))
