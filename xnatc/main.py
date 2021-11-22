@@ -210,7 +210,7 @@ def matches(child_id, match_id, args):
         if args.match_type == "glob":
             match_id = fnmatch.translate(match_id)
 
-        p = re.compile(match_id)
+        p = re.compile(match_id, re.IGNORECASE)
         if p.match(child_id):
             return True
 
