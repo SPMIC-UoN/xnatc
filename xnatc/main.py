@@ -42,13 +42,19 @@ def get_auth(args):
         print("WARNING: Xnat host did not have HTTP or HTTPS specified - assuming HTTPS")
         args.xnat = 'https://' + args.xnat
     url = urlparse(args.xnat)
-    auth_data = netrc.netrc()
-    if url.hostname in auth_data.hosts:
-        args.user, _account, args.password = auth_data.authenticators(url.hostname)
-    else:
+    try:
+        auth_data = netrc.netrc()
+        if url.hostname in auth_data.hosts:
+            args.user, _account, args.password = auth_data.authenticators(url.hostname)
+    except:
+        pass # fixme
+
+    if not args.user or not args.password:
         print("WARNING: No authentication information found in $HOME/.netrc")
-        args.user = input("Username: ").strip()
-        args.password = getpass.getpass()
+        if not args.user:
+           args.user = input("Username: ").strip()
+        if not args.password:
+            args.password = getpass.getpass()
         print("  Note: You can add your credentials to $HOME/.netrc for automatic login")
         print("        See https://xnat.readthedocs.io/en/latest/static/tutorial.html#credentials")
 
