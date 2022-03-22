@@ -115,14 +115,14 @@ TEMPLATE_DATASET_DESC = {
   "DatasetType": "raw",
 }
 
-def check_dataset_description(bidsdir, args):
+def check_dataset_description(bidsdir, project):
     """
     Check the dataset description file exists and write it if not
     """
     desc_file = os.path.join(bidsdir, "dataset_description.json")
     if not os.path.exists(desc_file):
         dataset_desc = dict(TEMPLATE_DATASET_DESC)
-        dataset_desc["Name"] = args.cur_project[1].name
+        dataset_desc["Name"] = project.label()
         with open(desc_file, 'w') as f:
             json.dump(dataset_desc, f)
 
@@ -130,48 +130,62 @@ def check_dataset_description(bidsdir, args):
     if not os.path.exists(readme_file):
         readme = """This data set was downloaded from:
     XNAT=%s
-    PROJECT=%s""" % (args.cur_xnat[0], args.cur_project[1].name)
+    PROJECT=%s""" % ("XNAT", project.label())
         with open(readme_file, 'w') as f:
             f.write(readme)
 
-def download_bids(resource, args):
-    bids_mapper = DEFAULT_MATCHER # FIXME use args.bids_mapper
+def download_bids(obj, obj_type, args, path):
+    if obj_type != "scan":
+        # Only download individual scans
+        return
 
+    print("Downloading %s: %s in BIDS format" % (obj_type, obj.label()))
+    r = obj.resource(args.download_resource)
+    exp = obj.parent()
+    subj = exp.parent()
+    proj = subj.parent()
+    
     # BIDS does not allow hyphen or underscore in IDs
-    bids_project = args.cur_project[0].replace("_", "").replace("-", "")
-    bids_subject = "sub-" + args.cur_subject[0].replace("_", "").replace("-", "")
-    bids_session = "ses-" + args.cur_experiment[0].replace("_", "").replace("-", "")
+    bids_project = proj.label().replace("_", "").replace("-", "")
+    bids_subject = "sub-" + subj.label().replace("_", "").replace("-", "")
+    bids_session = "ses-" + exp.label().replace("_", "").replace("-", "")
     bidsdir = os.path.join(args.download, bids_project)
     outdir = os.path.join(bidsdir, bids_subject, bids_session)
     os.makedirs(outdir, exist_ok=True)
+      
+    bids_mapper = DEFAULT_MATCHER # FIXME use args.bids_mapper
 
-    update_ptlist(bidsdir, bids_subject, args.cur_subject[1])
-    check_dataset_description(bidsdir, args)
+    update_ptlist(bidsdir, bids_subject, subj)
+    check_dataset_description(bidsdir, proj)
 
     # Download the NIFTI data and metadata
-    with tempfile.TemporaryDirectory() as d:
-        fname = os.path.join(d, "res.zip")
-        resource.download(fname)
-        archive = zipfile.ZipFile(fname)
+    # Set of all file name without extensions. Since we're dealing with
+    # a single scan there will normally be only one
+    imgfiles = set()
 
-        # Set of all file name without extensions. Since we're dealing with
-        # a single scan there will normally be only one
-        imgfiles = set()
-
-        # Copy expected files to output dir. Not given standard names or subfolders yet
-        EXTS = (".nii.gz", ".nii", ".json", ".bval", ".bvec")
-        for name in archive.namelist():
-            imgname = os.path.basename(name)
-            for ext in EXTS:
-                imgname = imgname.replace(ext, "")
-            imgfiles.add(imgname)
-            with open(os.path.join(outdir, os.path.basename(name)), "wb") as outfile:
-                contents = archive.open(name)
-                outfile.write(contents.read())
+    # Copy expected files to output dir. Not given standard names or subfolders yet
+    EXTS = (".nii.gz", ".nii", ".json", ".bval", ".bvec")
+        
+    for idx, f in enumerate(r.files()):
+        #f.get(os.path.join(download_path, f.label()))
+        name = f.label()
+        imgname = os.path.basename(name)
+        for ext in EXTS:
+            imgname = imgname.replace(ext, "")
+        imgfiles.add(imgname)
+        f.get(os.path.join(outdir, os.path.basename(name)))
 
     # Rename files according to matcher rules
     for imgname in imgfiles:
-        with open(os.path.join(outdir, imgname + ".json")) as json_file:
+        json_fname = os.path.join(outdir, imgname + ".json")
+        if not os.path.exists(json_fname):
+            print("WARNING: No JSON file for image: %s - removing from BIDS dataset" % imgname)
+            for ext in EXTS:
+                if os.path.exists(os.path.join(outdir, imgname + ext)):
+                    os.remove(os.path.join(outdir, imgname + ext))
+            continue
+
+        with open(json_fname) as json_file:
             json_data = json.load(json_file)
             found = False
             for matcher in bids_mapper:
