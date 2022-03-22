@@ -138,7 +138,7 @@ def download_bids(resource, args):
     bids_mapper = DEFAULT_MATCHER # FIXME use args.bids_mapper
 
     # BIDS does not allow hyphen or underscore in IDs
-    bids_project = args.cur_project[0].replace("_", "").replace("-", "")
+    bids_project = args.cur_project[1].id.replace("_", "").replace("-", "")
     bids_subject = "sub-" + args.cur_subject[0].replace("_", "").replace("-", "")
     bids_session = "ses-" + args.cur_experiment[0].replace("_", "").replace("-", "")
     bidsdir = os.path.join(args.download, bids_project)
