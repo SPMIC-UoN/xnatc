@@ -39,25 +39,28 @@ def get_auth(args):
 
 def main():
     parser = argparse.ArgumentParser(description='Command line interface to XNAT')
-    parser.add_argument('--xnat', default='https://xnatpriv.nottingham.ac.uk/', help='xnat host URL')
-    parser.add_argument('--user', help='XNAT user name. If not specified will use credentials from $HOME.netrc or prompt for username')
-    parser.add_argument('--password', help='XNAT password. If not specified will use credentials from $HOME.netrc or prompt for password')
-    parser.add_argument('--project', help='Project name/ID')
-    parser.add_argument('--subject', help='Subject name/ID')
-    parser.add_argument('--experiment', '--session', help='Experiment/Session name/ID')
-    parser.add_argument('--scan', help='Scan ID')
-    parser.add_argument('--assessor', help='Assessor name/ID')
-    parser.add_argument('--download', help='Download data to named directory')
-    parser.add_argument('--download-resource', help='Name of resource type to download', default='DICOM')
-    parser.add_argument('--download-format', help='Download format', default="xnat", choices=["xnat", "bids"])
-    #parser.add_argument('--bids-mapper', help='BIDS mapper', default="default")
-    parser.add_argument('--upload', help='File or directory containing data to upload to a scan/assessor')
-    parser.add_argument('--upload-resource', help='Resource type for uploaded data - if not specified will try to autodetect from file type')
-    parser.add_argument('--upload-name', help='Name to give uploaded data - defaults to file basename')
-    #parser.add_argument('--assessor-type', help='Assessor type to create on upload if it does not already exist', default="PipelineData")
-    parser.add_argument('--create-assessor', help='File containing XML definition of assessor to create')
-    parser.add_argument('--match-type', help='Type of matching', choices=['glob', 're'], default='glob')
-    parser.add_argument('--match-files', action="store_true", help='Allow subject/experiment/scan etc to be file names containing ID lists')
+    g = parser.add_argument_group("XNAT connection")
+    g.add_argument('--xnat', default='https://xnatpriv.nottingham.ac.uk/', help='xnat host URL')
+    g.add_argument('--user', help='XNAT user name. If not specified will use credentials from $HOME.netrc or prompt for username')
+    g.add_argument('--password', help='XNAT password. If not specified will use credentials from $HOME.netrc or prompt for password')
+    g = parser.add_argument_group("Data selection")
+    g.add_argument('--project', help='Project name/ID')
+    g.add_argument('--subject', help='Subject name/ID')
+    g.add_argument('--experiment', '--session', help='Experiment/Session name/ID')
+    g.add_argument('--scan', help='Scan ID')
+    g.add_argument('--assessor', help='Assessor name/ID')
+    g.add_argument('--match-type', help='Type of matching for project specifications etc', choices=['glob', 're'], default='glob')
+    g.add_argument('--match-files', action="store_true", help='Allow subject/experiment/scan etc to be file names containing ID lists')
+    g = parser.add_argument_group("Downloading data")
+    g.add_argument('--download', help='Download data to named directory')
+    g.add_argument('--download-resource', help='Name of resource type to download', default='DICOM')
+    g.add_argument('--download-format', help='Download format', default="xnat", choices=["xnat", "bids"])
+    #g.add_argument('--bids-mapper', help='BIDS mapper', default="default")
+    g = parser.add_argument_group("Uploading data")
+    g.add_argument('--upload', help='File or directory containing data to upload to a scan/assessor')
+    g.add_argument('--upload-resource', help='Resource type for uploaded data - if not specified will try to autodetect from file type')
+    g.add_argument('--upload-name', help='Name to give uploaded data - defaults to file basename')
+    g.add_argument('--create-assessor', help='File containing XML definition of assessor to create')
     parser.add_argument('--debug', action="store_true", help='Enable debug mode')
     args = parser.parse_args()
     args.list_children = True
@@ -105,10 +108,11 @@ def do_create_assessor(conn, args):
         print("Could not find unique matching object to create assessor for")
         return False
     
-    obj, obj_type = res
+    obj, obj_type, path = res
     print("Uploading %s as an assessor for %s: %s" % (args.create_assessor, obj_type, obj.label()))
     upload_file(obj, args.upload_resource, args.upload, args.upload_name)
-    obj.post(args.create_assessor)
+    with open(args.create_assessor, "r") as f:
+        conn.post(path, files={"file" : f})
 
     return True
 
@@ -151,54 +155,60 @@ def find(conn, args):
     """
     Find a specific object based on args passed
     """
+    path=""
     projects = conn.select.projects()
     found = False
     for p in projects:
         if exact_match(p, args.project):
+            path += "projects/" + p.id()
             found = True
             break
     if not found:
         return
     elif not args.subject:
-        return p, "project"
+        return p, "project", path
 
     found = False
     for s in p.subjects():
         if exact_match(s, args.subject):
+            path += "/subjects/" + s.id()
             found = True
             break
     if not found:
         return
     elif not args.experiment:
-        return s, "subject"
+        return s, "subject", path
 
     found = False
     for e in s.experiments():
         if exact_match(e, args.experiment):
+            path += "/experiments/" + e.id()
             found = True
             break
     if not found:
         return
     elif not args.scan and not args.assessor:
-        return e, "experiment"
+        return e, "experiment", path
 
     found = False
     if args.scan:
         for s in e.scans():
             if exact_match(s, args.scan):
+                path += "/scans/" + s.id()
                 found = True
                 s_type = "scan"
                 break
     elif args.assessor:
         for s in e.assessors():
             if exact_match(s, args.assessor):
+                path += "/assessors/" + s.id()
                 found = True
                 s_type = "assessor"
                 break
     if not found:
         return
     else:
-        return s, s_type
+        return s, s_type, path
 
 def download_bids(obj, obj_type, args, path):
     if obj_type != "scan":
