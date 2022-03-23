@@ -110,9 +110,11 @@ def do_create_assessor(conn, args):
     
     obj, obj_type, path = res
     print("Uploading %s as an assessor for %s: %s" % (args.create_assessor, obj_type, obj.label()))
-    upload_file(obj, args.upload_resource, args.upload, args.upload_name)
     with open(args.create_assessor, "r") as f:
-        conn.post(path, files={"file" : f})
+        path="/data/" + path + "/assessors/"
+        r = conn.post(path, files={"file" : f})
+        if r.status_code != 200:
+            raise RuntimeError("Failed to upload assessor: %i" % r.status_code)
 
     return True
 
