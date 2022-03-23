@@ -69,10 +69,6 @@ def main():
 
     connection = pyxnat.Interface(server=args.xnat, user=args.user, password=args.password, verify=False)
     connection.xnat_url = args.xnat
-    if args.scan and not args.assessor:
-        args.assessor = "skip"
-    elif args.assessor and not args.scan:
-        args.scan = "skip"
 
     if args.download:
         if args.download_format == "bids" and not args.download_resource == "NIFTI":
@@ -124,7 +120,7 @@ def do_upload(conn, args):
         print("Could not find unique matching object to upload file for")
         return False
 
-    obj, obj_type = res
+    obj, obj_type, path = res
     if os.path.isdir(args.upload):
         print("Uploading contents of %s as resource for %s: %s" % (args.upload,obj_type, obj.label()))
         for fname in os.listdir(args.upload):
