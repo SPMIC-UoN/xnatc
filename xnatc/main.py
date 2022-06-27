@@ -128,24 +128,27 @@ def do_upload(conn, args):
             if os.path.isdir(fpath):
                 for sub_fname in os.listdir(fpath):
                     sub_fpath = os.path.join(fpath, sub_fname)
-                    upload_file(obj, fname, sub_fpath)
+                    upload_file(conn, path, fname, sub_fpath)
             else:
-                upload_file(obj, args.upload_resource, fpath)
+                upload_file(conn, path, args.upload_resource, fpath)
     else:
         print("Uploading %s as %s resource for %s: %s" % (args.upload, args.upload_resource, obj_type, obj.label()))
-        upload_file(obj, args.upload_resource, args.upload, args.upload_name)
+        upload_file(conn, path, args.upload_resource, args.upload, args.upload_name)
 
     return True
 
-def upload_file(obj, resource_type, fname, upload_name=None):
+def upload_file(conn, path, resource_type, fname, upload_name=None):
     if not upload_name:
         upload_name = os.path.basename(fname)
     if not resource_type and (fname.lower().endswith(".nii") or fname.lower().endswith(".nii.gz")):
         resource_type = 'NIFTI'
 
     if resource_type:
-        r = obj.resource(resource_type)
-        r.file(upload_name).put(fname)
+        path = "/data/%s/resources/%s/files/%s" % (path, resource_type, upload_name)
+        with open(fname, "r") as f:
+            r = conn.put(path, files={"file" : f})
+            if r.status_code != 200:
+                raise RuntimeError("Failed to upload resource file: %i" % r.status_code)
     else:
         print("WARNING: Could not detect resource type for %s - will not upload" % fname)
 
@@ -262,7 +265,7 @@ def do_list_experiments(subj, args, path, action):
     for e in exps:
         if matches(e, args.experiment, args):
             opath = path + e.label()
-            action(e, "session", args, opath)
+            action(e, "experiment", args, opath)
             do_list_scans(e, args, opath + "/scans/", action)
             do_list_assessors(e, args, opath + "/assessors/", action)
 
