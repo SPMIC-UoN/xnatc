@@ -10,6 +10,25 @@ import logging
 
 LOG = logging.getLogger(__name__)
 
+def get_echo_num(fname, json_data):
+    """
+    Try to identify the echo number if possible
+    """
+    echo_res = [re.compile(".*_echo(\d+)[_$]"), re.compile(".*_e(\d+)[_$]")]
+    if "EchoNumber" in json_data:
+        return json_data["EchoNumber"]
+
+    for echo_re in echo_res:
+        match = echo_re.match(fname.lower())
+        if match:
+            return int(match.group(1))
+
+def get_coil_num(fname, json_data):
+    pattern = re.compile(".*coil(\d+).*")
+    match= pattern.match(fname.lower())
+    if match:
+        return int(match.group(1))
+
 # Matchers return tuple of (subfolder, suffix, dict of additional filename attributes, dict of json updates)
 # or None if file did not match
 def match_anat(fname, json_data):
@@ -26,9 +45,17 @@ def match_anat(fname, json_data):
         suffix = "T2w"
 
     if suffix:
-        if "NORM" in json_data.get("ImageType", []):
-            attrs["acq"] = "NORM"
-        return folder, suffix, attrs, md
+        img_types = [s.upper() for s in json_data.get("ImageType", [])]
+        if "NORM" in img_types:
+            attrs["acq"] = "norm"
+        if "PHASE" in img_types:
+            attrs["part"] = "phase"
+        if fname.lower().endswith("_ph"):
+            attrs["part"] = "phase"
+
+        echonum = get_echo_num(fname, json_data)
+        if echonum:
+            attrs["echo"] = echonum
 
 def match_func(fname, json_data):
     """
@@ -76,14 +103,13 @@ def match_swi(fname, json_data):
         else:
             suffix = "swi"
 
-        if "EchoNumber" in json_data:
-            attrs["echo"] = json_data["EchoNumber"]
+        echonum = get_echo_num(fname, json_data)
+        if echonum:
+            attrs["echo"] = echonum
 
-        pattern = re.compile(".*coil(\d+).*")
-        match= pattern.match(fname.lower())
-        if match:
-            coil = int(match.group(1))
-            attrs["coil"] = coil
+        coilnum = get_coil_num(fname, json_data)
+        if coilnum:
+            attrs["coil"] = coilnum
 
         return folder, suffix, attrs, md
 
@@ -199,9 +225,10 @@ def download_bids(obj, obj_type, args, path):
             if bids_match:
                 folder, suffix, attrs, md = bids_match
                 os.makedirs(os.path.join(outdir, folder), exist_ok=True)
+                handled_duplicates = False
                 for ext in EXTS:
-                    src_fname = os.path.join(outdir, imgname + ext)                    
-                    while 1:
+                    src_fname = os.path.join(outdir, imgname + ext)
+                    while not handled_duplicates:
                         # Ugly code to avoid overwriting existing files with same name by adding the
                         # BIDS 'run' attribute to distinguish between them
                         bids_fname = "_".join(["%s-%s" % (k, v) for k, v in attrs.items()] + [suffix])
@@ -212,15 +239,15 @@ def download_bids(obj, obj_type, args, path):
                                 # the new conflicting file can be tried out as 'run 2'
                                 attrs["run"] = 1
                                 rename_existing_bids_fname = "_".join(["%s-%s" % (k, v) for k, v in attrs.items()] + [suffix])
-                                rename_existing_dest_fname = os.path.join(outdir, folder, "%s_%s_%s%s" % (bids_subject, bids_session, bids_fname, ext))
+                                rename_existing_dest_fname = os.path.join(outdir, folder, "%s_%s_%s%s" % (bids_subject, bids_session, rename_existing_bids_fname, ext))
                                 os.rename(dest_fname, rename_existing_dest_fname)
                                 attrs["run"] = 2
                             else:
                                 attrs["run"] += 1
                         else:
-                            break
-
-                    print(f"Mapping {imgname} -> {folder} / {bids_fname}")
+                            # Can now use the run attribute for all extensions
+                            print(f"Mapping {imgname} -> {folder} / {bids_fname}")
+                            handled_duplicates = True
 
                     if os.path.exists(src_fname):
                         os.rename(src_fname, dest_fname)
