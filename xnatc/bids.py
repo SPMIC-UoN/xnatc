@@ -6,23 +6,27 @@ import os
 import re
 import tempfile
 import zipfile
+import logging
+
+LOG = logging.getLogger(__name__)
 
 # Matchers return tuple of (subfolder, suffix, dict of additional filename attributes, dict of json updates)
 # or None if file did not match
-
 def match_anat(fname, json_data):
     """
     Match anatomical images
     """
     folder, suffix, attrs, md = "anat", None, {}, {}
-    desc = json_data["SeriesDescription"].lower()
+    desc = json_data.get("SeriesDescription", "").lower()
     if "t1" in desc:
         suffix = "T1w"
+    elif "t2star" in desc:
+        suffix = "T2starw"
     elif "t2" in desc:
         suffix = "T2w"
 
     if suffix:
-        if "NORM" in json_data["ImageType"]:
+        if "NORM" in json_data.get("ImageType", []):
             attrs["acq"] = "NORM"
         return folder, suffix, attrs, md
 
@@ -31,7 +35,7 @@ def match_func(fname, json_data):
     Match functional images
     """
     folder, suffix, attrs, md = "func", None, {}, {}
-    desc = json_data["SeriesDescription"].lower()
+    desc = json_data.get("SeriesDescription", "").lower()
     if "fmri" in desc:
         if "sbref" in desc:
             suffix = "sbref"
@@ -51,7 +55,7 @@ def match_dwi(fname, json_data):
     Match DWI images
     """
     folder, suffix, attrs, md = "dwi", None, {}, {}
-    desc = json_data["SeriesDescription"].lower()
+    desc = json_data.get("SeriesDescription", "").lower()
     if "diff" in desc:
         if "sbref" in desc:
             suffix = "sbref"
@@ -65,7 +69,7 @@ def match_swi(fname, json_data):
     Match SWI images
     """
     folder, suffix, attrs, md = "swi", None, {}, {}
-    desc = json_data["SeriesDescription"].lower()
+    desc = json_data.get("SeriesDescription", "").lower()
     if "swi" in desc:
         if "sbref" in desc:
             suffix = "sbref"
@@ -179,30 +183,50 @@ def download_bids(obj, obj_type, args, path):
     for imgname in imgfiles:
         json_fname = os.path.join(outdir, imgname + ".json")
         if not os.path.exists(json_fname):
-            print("WARNING: No JSON file for image: %s - removing from BIDS dataset" % imgname)
+            LOG.warn(f"No JSON sidecar for {imgname} - may not be able to match file")
+            json_data = {}
+        else:
+            try:
+                with open(os.path.join(outdir, imgname + ".json")) as json_file:
+                    json_data = json.load(json_file)
+            except Exception as exc:
+                LOG.warn("Error reading JSON metadat: %s - may not be able to match file", str(exc))
+                json_data = {}
+        found = False
+        for matcher in bids_mapper:
+            bids_match = matcher(imgname, json_data)
+            if bids_match:
+                folder, suffix, attrs, md = bids_match
+                os.makedirs(os.path.join(outdir, folder), exist_ok=True)
+                for ext in EXTS:
+                    src_fname = os.path.join(outdir, imgname + ext)                    
+                    while 1:
+                        # Ugly code to avoid overwriting existing files with same name by adding the
+                        # BIDS 'run' attribute to distinguish between them
+                        bids_fname = "_".join(["%s-%s" % (k, v) for k, v in attrs.items()] + [suffix])
+                        dest_fname = os.path.join(outdir, folder, "%s_%s_%s%s" % (bids_subject, bids_session, bids_fname, ext))
+                        if os.path.exists(dest_fname):
+                            if "run" not in attrs:
+                                # Existing file lacks the 'run' attribute so first we need to designate it as 'run 1', then
+                                # the new conflicting file can be tried out as 'run 2'
+                                attrs["run"] = 1
+                                rename_existing_bids_fname = "_".join(["%s-%s" % (k, v) for k, v in attrs.items()] + [suffix])
+                                rename_existing_dest_fname = os.path.join(outdir, folder, "%s_%s_%s%s" % (bids_subject, bids_session, bids_fname, ext))
+                                os.rename(dest_fname, rename_existing_dest_fname)
+                                attrs["run"] = 2
+                            else:
+                                attrs["run"] += 1
+                        else:
+                            break
+
+                    print(f"Mapping {imgname} -> {folder} / {bids_fname}")
+
+                    if os.path.exists(src_fname):
+                        os.rename(src_fname, dest_fname)
+                found = True
+                break
+        if not found:
+            LOG.warn(f"Unmatched file: {imgname} - removing from BIDS dataset")
             for ext in EXTS:
                 if os.path.exists(os.path.join(outdir, imgname + ext)):
                     os.remove(os.path.join(outdir, imgname + ext))
-            continue
-
-        with open(json_fname) as json_file:
-            json_data = json.load(json_file)
-            found = False
-            for matcher in bids_mapper:
-                bids_match = matcher(imgname, json_data)
-                if bids_match:
-                    folder, suffix, attrs, md = bids_match
-                    bids_fname = "_".join(["%s-%s" % (k, v) for k, v in attrs.items()] + [suffix])
-                    os.makedirs(os.path.join(outdir, folder), exist_ok=True)
-                    for ext in EXTS:
-                        src_fname = os.path.join(outdir, imgname + ext)
-                        dest_fname = os.path.join(outdir, folder, "%s_%s_%s%s" % (bids_subject, bids_session, bids_fname, ext))
-                        if os.path.exists(src_fname):
-                            os.rename(src_fname, dest_fname)
-                    found = True
-                    break
-            if not found:
-                print("WARNING: Unmatched file: %s - removing from BIDS dataset" % imgname)
-                for ext in EXTS:
-                    if os.path.exists(os.path.join(outdir, imgname + ext)):
-                        os.remove(os.path.join(outdir, imgname + ext))

@@ -66,6 +66,8 @@ def main():
     args.list_children = True
 
     get_auth(args)
+    import urllib3
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
     connection = pyxnat.Interface(server=args.xnat, user=args.user, password=args.password, verify=False)
     connection.xnat_url = args.xnat
@@ -98,6 +100,13 @@ def main():
     else:
         do_list(connection, args)
 
+def label(obj):
+    try:
+        return obj.label()
+    except Exception as exc:
+        print("WARNING: %s" % str(exc))
+        return "UNKNOWN"
+
 def do_create_assessor(conn, args):
     res = find(conn, args)
     if not res:
@@ -105,7 +114,7 @@ def do_create_assessor(conn, args):
         return False
     
     obj, obj_type, path = res
-    print("Uploading %s as an assessor for %s: %s" % (args.create_assessor, obj_type, obj.label()))
+    print("Uploading %s as an assessor for %s: %s" % (args.create_assessor, obj_type, label(obj)))
     with open(args.create_assessor, "r") as f:
         path="/data/" + path + "/assessors/"
         r = conn.post(path, files={"file" : f})
@@ -122,7 +131,7 @@ def do_upload(conn, args):
 
     obj, obj_type, path = res
     if os.path.isdir(args.upload):
-        print("Uploading contents of %s as resource for %s: %s" % (args.upload,obj_type, obj.label()))
+        print("Uploading contents of %s as resource for %s: %s" % (args.upload,obj_type, label(obj)))
         for fname in os.listdir(args.upload):
             fpath = os.path.join(args.upload, fname)
             if os.path.isdir(fpath):
@@ -132,7 +141,7 @@ def do_upload(conn, args):
             else:
                 upload_file(conn, path, args.upload_resource, fpath)
     else:
-        print("Uploading %s as %s resource for %s: %s" % (args.upload, args.upload_resource, obj_type, obj.label()))
+        print("Uploading %s as %s resource for %s: %s" % (args.upload, args.upload_resource, obj_type, label(obj)))
         upload_file(conn, path, args.upload_resource, args.upload, args.upload_name)
 
     return True
@@ -211,20 +220,6 @@ def find(conn, args):
     else:
         return s, s_type, path
 
-def download_bids(obj, obj_type, args, path):
-    if obj_type != "scan":
-        return
-        
-    r = obj.resource(args.download_resource)
-    proj = obj.project().label()
-    subj = obj.subject().label()
-    exp = obj.experiment().label()
-    
-    for idx, f in enumerate(r.files()):
-        if idx == 0:
-            print("Downloading files for %s: %s" % (obj_type, obj.label()))
-        f.get(os.path.join(download_path, f.label()))
-                 
 def download_obj(obj, obj_type, args, path):
     download_path = os.path.join(args.download, path, args.download_resource)
     os.makedirs(download_path, exist_ok=True)
@@ -232,14 +227,14 @@ def download_obj(obj, obj_type, args, path):
 
     for idx, f in enumerate(r.files()):
         if idx == 0:
-            print("Downloading files for %s: %s" % (obj_type, obj.label()))
-        f.get(os.path.join(download_path, f.label()))
+            print("Downloading files for %s: %s" % (obj_type, label(obj)))
+        f.get(os.path.join(download_path, label(f)))
                          
 def print_obj(obj, obj_type, args, path):
     prefixes = {
         "project" : "", "subject" :  " - ", "experiment" : "  - ", "scan" : "   - ", "assessor" : "   - ",
     }
-    print("%s%s: %s" % (prefixes[obj_type.lower()], obj_type, obj.label()))
+    print("%s%s: %s" % (prefixes[obj_type.lower()], obj_type, label(obj)))
 
 def do_list(conn, args, path="projects/", action=print_obj):
     """
@@ -248,7 +243,7 @@ def do_list(conn, args, path="projects/", action=print_obj):
     projects = conn.select.projects()
     for p in projects:
         if matches(p, args.project, args):
-            ppath = path + p.label()
+            ppath = path + label(p)
             action(p, "project", args, ppath)
             do_list_subjects(p, args, ppath + "/subjects/" , action)
 
@@ -256,7 +251,7 @@ def do_list_subjects(proj, args, path, action):
     subjects = proj.subjects()
     for s in subjects:
         if matches(s, args.subject, args):
-            opath = path + s.label()
+            opath = path + label(s)
             action(s, "subject", args, opath)
             do_list_experiments(s, args, opath + "/experiments/", action)
 
@@ -264,7 +259,7 @@ def do_list_experiments(subj, args, path, action):
     exps = subj.experiments()
     for e in exps:
         if matches(e, args.experiment, args):
-            opath = path + e.label()
+            opath = path + label(e)
             action(e, "experiment", args, opath)
             do_list_scans(e, args, opath + "/scans/", action)
             do_list_assessors(e, args, opath + "/assessors/", action)
@@ -273,18 +268,18 @@ def do_list_scans(exp, args, path, action):
     scans = exp.scans()
     for s in scans:
         if matches(s, args.scan, args):
-            opath = path + s.label()
+            opath = path + label(s)
             action(s, "scan", args, opath)
 
 def do_list_assessors(exp, args, path, action):
     assessors = exp.assessors()
     for a in assessors:
         if matches(a, args.assessor, args):
-            opath = path + a.label()
+            opath = path + label(a)
             action(a, "assessor", args, opath)
 
 def exact_match(obj, match_id):
-    return obj.label().lower() == match_id.lower() or obj.id().lower() == match_id.lower()
+    return label(obj).lower() == match_id.lower() or obj.id().lower() == match_id.lower()
 
 def matches(obj, match_id, args):
     if match_id == "skip":
@@ -305,7 +300,7 @@ def matches(obj, match_id, args):
         p = re.compile(match_id, re.IGNORECASE)
         if p.match(obj.id()):
             return True
-        elif p.match(obj.label()):
+        elif p.match(label(obj)):
             return True
 
     return False
