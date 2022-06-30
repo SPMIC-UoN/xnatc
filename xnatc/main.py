@@ -7,33 +7,12 @@ import getpass
 import netrc
 import os
 import re
-import requests
-import tempfile
+import sys
 from urllib.parse import urlparse
-import zipfile
 
-import xnat
+import pyxnat
 
 from . import bids
-
-HIERARCHY = [
-    ["xnat"],
-    ["project"],
-    ["subject"],
-    ["experiment"],
-    ["scan", "assessor"],
-]
-
-def label(obj):
-    if hasattr(obj, "label"):
-        label = obj.label
-    elif hasattr(obj, "name"):
-        label = obj.name
-    elif hasattr(obj, "xnat_url"):
-        label = obj.xnat_url
-    else:
-        label = obj.id
-    return label, getattr(obj, "id", label)
 
 def get_auth(args):
     if args.user and args.password:
@@ -58,152 +37,254 @@ def get_auth(args):
         print("  Note: You can add your credentials to $HOME/.netrc for automatic login")
         print("        See https://xnat.readthedocs.io/en/latest/static/tutorial.html#credentials")
 
-def download_xnat(resource, args):
-    """
-    Download resource in 'XNAT' structure - i.e. directory tree of project/subject/experiment/scan/
-    """
-    outdir = os.path.join(args.download, args.cur_project[0], args.cur_subject[0], args.cur_experiment[0], args.cur_scan[0])
-    os.makedirs(outdir, exist_ok=True)
-    with tempfile.TemporaryDirectory() as d:
-        fname = os.path.join(d, "res.zip")
-        resource.download(fname)
-        archive = zipfile.ZipFile(fname)
-        for name in archive.namelist():
-            with open(os.path.join(outdir, os.path.basename(name)), "wb") as outfile:
-                contents = archive.open(name)
-                outfile.write(contents.read())
-
-def get_downloader(format):
-    if format == "xnat":
-        return download_xnat
-    elif format == "bids":
-        return bids.download_bids
-    else:
-        raise ValueError("Unrecognized download format: %s" % format)
-
-def upload_dir(obj, dirname, default_resource_type=None, indent=""):
-    print("%s - Uploading contents of %s" % (indent, dirname))
-    for fname in os.listdir(dirname):
-        fpath = os.path.join(dirname, fname)
-        if os.path.isdir(fpath):
-            for sub_fname in os.listdir(fpath):
-                sub_fpath = os.path.join(fpath, sub_fname)
-                upload_file(obj, sub_fpath, resource_type=fname, indent=indent+"  ")
-        else:
-            upload_file(obj, fpath, resource_type=default_resource_type, indent=indent+"  ")
-
-def upload_file(obj, fname, resource_type=None, upload_name=None, indent=""):
-    if not resource_type and (fname.lower().endswith(".nii") or fname.lower().endswith(".nii.gz")):
-        resource_type = 'NIFTI'
-
-    if resource_type:
-        if resource_type not in obj.resources:
-            resource = obj.xnat_session.classes.ResourceCatalog(parent=obj, label=resource_type)
-        else:
-            resource = obj.resources[resource_type]
-
-        if not upload_name:
-            upload_name = os.path.basename(fname)
-
-        resource.upload(fname, upload_name)
-        print("%s - Uploaded %s as %s/%s" % (indent, fname, resource_type, upload_name))
-    else:
-        print("WARNING: Could not detect resource type for %s - will not upload" % fname)
-
 def main():
     parser = argparse.ArgumentParser(description='Command line interface to XNAT')
-    parser.add_argument('--xnat', default='https://xnatpriv.nottingham.ac.uk/', help='xnat host URL')
-    parser.add_argument('--user', help='XNAT user name. If not specified will use credentials from $HOME.netrc or prompt for username')
-    parser.add_argument('--password', help='XNAT password. If not specified will use credentials from $HOME.netrc or prompt for password')
-    parser.add_argument('--project', help='Project name/ID')
-    parser.add_argument('--subject', help='Subject name/ID')
-    parser.add_argument('--experiment', help='Experiment name/ID')
-    parser.add_argument('--scan', help='Scan ID')
-    parser.add_argument('--assessor', help='Assessor name/ID')
-    parser.add_argument('--download', help='Download data to named directory')
-    parser.add_argument('--download-resource', help='Name of resource type to download', default='DICOM')
-    parser.add_argument('--download-format', help='Download format', default="xnat", choices=["xnat", "bids"])
-    #parser.add_argument('--bids-mapper', help='BIDS mapper', default="default")
-    parser.add_argument('--upload', help='File or directory containing data to upload to a scan/assessor')
-    parser.add_argument('--upload-resource', help='Resource type for uploaded data - if not specified will try to autodetect from file type')
-    parser.add_argument('--upload-name', help='Name to give uploaded data - defaults to file basename')
-    #parser.add_argument('--assessor-type', help='Assessor type to create on upload if it does not already exist', default="PipelineData")
-    parser.add_argument('--create-assessor', help='File containing XML definition of assessor to create')
-    parser.add_argument('--match-type', help='Type of matching', choices=['glob', 're'], default='glob')
-    parser.add_argument('--match-files', action="store_true", help='Allow subject/experiment/scan etc to be file names containing ID lists')
+    g = parser.add_argument_group("XNAT connection")
+    g.add_argument('--xnat', default='https://xnatpriv.nottingham.ac.uk/', help='xnat host URL')
+    g.add_argument('--user', help='XNAT user name. If not specified will use credentials from $HOME.netrc or prompt for username')
+    g.add_argument('--password', help='XNAT password. If not specified will use credentials from $HOME.netrc or prompt for password')
+    g = parser.add_argument_group("Data selection")
+    g.add_argument('--project', help='Project name/ID')
+    g.add_argument('--subject', help='Subject name/ID')
+    g.add_argument('--experiment', '--session', help='Experiment/Session name/ID')
+    g.add_argument('--scan', help='Scan ID')
+    g.add_argument('--assessor', help='Assessor name/ID')
+    g.add_argument('--match-type', help='Type of matching for project specifications etc', choices=['glob', 're'], default='glob')
+    g.add_argument('--match-files', action="store_true", help='Allow subject/experiment/scan etc to be file names containing ID lists')
+    g = parser.add_argument_group("Downloading data")
+    g.add_argument('--download', help='Download data to named directory')
+    g.add_argument('--download-resource', help='Name of resource type to download', default='DICOM')
+    g.add_argument('--download-format', help='Download format', default="xnat", choices=["xnat", "bids"])
+    #g.add_argument('--bids-mapper', help='BIDS mapper', default="default")
+    g = parser.add_argument_group("Uploading data")
+    g.add_argument('--upload', help='File or directory containing data to upload to a scan/assessor')
+    g.add_argument('--upload-resource', help='Resource type for uploaded data - if not specified will try to autodetect from file type')
+    g.add_argument('--upload-name', help='Name to give uploaded data - defaults to file basename')
+    g.add_argument('--create-assessor', help='File containing XML definition of assessor to create')
     parser.add_argument('--debug', action="store_true", help='Enable debug mode')
     args = parser.parse_args()
     args.list_children = True
 
     get_auth(args)
+    import urllib3
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-    with xnat.connect(args.xnat, user=args.user, password=args.password, debug=args.debug) as connection:
-        connection.xnat_url = args.xnat
-        if args.scan and not args.assessor:
-            args.assessor = "skip"
-        elif args.assessor and not args.scan:
-            args.scan = "skip"
+    connection = pyxnat.Interface(server=args.xnat, user=args.user, password=args.password, verify=False)
+    connection.xnat_url = args.xnat
 
-        if args.download:
-            args.downloader = get_downloader(args.download_format)
-            if args.download_format == "bids" and not args.download_resource == "NIFTI":
-                print("WARNING: Setting download resource to NIFTI as required for BIDS")
-                args.download_resource = "NIFTI"
-        elif args.upload and (not args.project or not args.subject or not args.experiment or not (args.scan or args.assessor)):
+    if args.download:
+        if args.download_format == "bids" and not args.download_resource == "NIFTI":
+            print("WARNING: Setting download resource to NIFTI as required for BIDS")
+            args.download_resource = "NIFTI"
+
+        if args.download_format == "bids":
+            do_list(connection, args, action=bids.download_bids)
+        elif args.download_format == "xnat":
+            do_list(connection, args, action=download_obj)
+        else:
+            print("Unknown download format: %s" % args.download_format)
+            sys.exit(1)
+
+        print("Data downloaded to %s" % args.download)
+
+    elif args.upload:
+        if not args.project or not args.subject or not args.experiment or not (args.scan or args.assessor):
             raise RuntimeError("To upload data you must fully specify a project, subject, experiment and either a scan or an assessor")
+        do_upload(connection, args)
 
-        process(connection, args, HIERARCHY[0][0], 0)
-        if args.download:
-            print("Data downloaded to %s" % args.download)
+    elif args.create_assessor:
+        if not args.project or not args.subject:
+            raise RuntimeError("To create an assessor you must specify a project and subject (optionally an experiment too)")
+        do_create_assessor(connection, args)
 
-def process(obj, args, obj_type, hierarchy_idx, indent=""):
-    print("%s%s: %s" % (indent, obj_type.capitalize(), label(obj)[0]))
-    setattr(args, "cur_" + obj_type, (label(obj)[0], obj))
-
-    if hierarchy_idx == len(HIERARCHY)-1:
-        # At the bottom level, i.e. scan/assessor
-        if args.download:
-            if args.download_resource in obj.resources:
-                res = obj.resources[args.download_resource]
-                try:
-                    args.downloader(res, args)
-                except Exception as exc:
-                    print("WARNING: Failed to download resource %s from %s %s: %s" % (args.download_resource, obj_type.capitalize(), label(obj)[0], str(exc)))
-            else:
-                print("WARNING: %s %s does not have an associated resource named %s" % (obj_type.capitalize(), label(obj)[0], args.download_resource))
-
-        if args.upload:
-            if os.path.isdir(args.upload):
-                upload_dir(obj, args.upload, args.upload_resource, indent)
-            else:
-                upload_file(obj, args.upload, args.upload_resource, args.upload_name, indent)
-    elif args.create_assessor and obj_type == "experiment":
-        # We have been asked to create an assessor using the given XML document
-        # Unfortunately xnat_session.post doesn't seem to handle files? So use requests directly
-        print("%s - Creating new assessor using XML: %s" % (indent, args.create_assessor))
-        with open(args.create_assessor) as xmldata:
-            requests.post("%s/%s/assessors" % (args.xnat, obj.uri), files={"file" : xmldata})
     else:
-        match = False
-        for child_type in HIERARCHY[hierarchy_idx+1]:
-            children = getattr(obj, child_type + "s")
-            match_id = getattr(args, child_type)
-            for child in children.values():
-                for lbl in label(child):
-                    if matches(lbl, match_id, args):
-                        process(child, args, child_type, hierarchy_idx+1, indent+"  ")
-                        match = True
-                        break
-        if not match and args.upload and obj_type == "experiment":
-            # When uploading we may need to create the assessor if it doesn't currently exist
-            print("%s - Creating new assessor %s (%s) as currently does not exist" % (indent, args.assessor if args.assessor else args.scan, args.assessor_type))
-            assessor = getattr(obj.xnat_session.classes, args.assessor_type)(parent=obj, label=args.assessor if args.assessor else args.scan)
-            process(assessor, args, "assessor" if args.assessor else "scan", hierarchy_idx+1, indent+"  ")
+        do_list(connection, args)
 
-def matches(child_id, match_id, args):
+def label(obj):
+    try:
+        return obj.label()
+    except Exception as exc:
+        print("WARNING: %s" % str(exc))
+        return "UNKNOWN"
+
+def do_create_assessor(conn, args):
+    res = find(conn, args)
+    if not res:
+        print("Could not find unique matching object to create assessor for")
+        return False
+    
+    obj, obj_type, path = res
+    print("Uploading %s as an assessor for %s: %s" % (args.create_assessor, obj_type, label(obj)))
+    with open(args.create_assessor, "r") as f:
+        path="/data/" + path + "/assessors/"
+        r = conn.post(path, files={"file" : f})
+        if r.status_code != 200:
+            raise RuntimeError("Failed to upload assessor: %i" % r.status_code)
+
+    return True
+
+def do_upload(conn, args):
+    res = find(conn, args)
+    if not res:
+        print("Could not find unique matching object to upload file for")
+        return False
+
+    obj, obj_type, path = res
+    if os.path.isdir(args.upload):
+        print("Uploading contents of %s as resource for %s: %s" % (args.upload,obj_type, label(obj)))
+        for fname in os.listdir(args.upload):
+            fpath = os.path.join(args.upload, fname)
+            if os.path.isdir(fpath):
+                for sub_fname in os.listdir(fpath):
+                    sub_fpath = os.path.join(fpath, sub_fname)
+                    upload_file(conn, path, fname, sub_fpath)
+            else:
+                upload_file(conn, path, args.upload_resource, fpath)
+    else:
+        print("Uploading %s as %s resource for %s: %s" % (args.upload, args.upload_resource, obj_type, label(obj)))
+        upload_file(conn, path, args.upload_resource, args.upload, args.upload_name)
+
+    return True
+
+def upload_file(conn, path, resource_type, fname, upload_name=None):
+    if not upload_name:
+        upload_name = os.path.basename(fname)
+    if not resource_type and (fname.lower().endswith(".nii") or fname.lower().endswith(".nii.gz")):
+        resource_type = 'NIFTI'
+
+    if resource_type:
+        path = "/data/%s/resources/%s/files/%s" % (path, resource_type, upload_name)
+        with open(fname, "r") as f:
+            r = conn.put(path, files={"file" : f})
+            if r.status_code != 200:
+                raise RuntimeError("Failed to upload resource file: %i" % r.status_code)
+    else:
+        print("WARNING: Could not detect resource type for %s - will not upload" % fname)
+
+def find(conn, args):
+    """
+    Find a specific object based on args passed
+    """
+    path=""
+    projects = conn.select.projects()
+    found = False
+    for p in projects:
+        if exact_match(p, args.project):
+            path += "projects/" + p.id()
+            found = True
+            break
+    if not found:
+        return
+    elif not args.subject:
+        return p, "project", path
+
+    found = False
+    for s in p.subjects():
+        if exact_match(s, args.subject):
+            path += "/subjects/" + s.id()
+            found = True
+            break
+    if not found:
+        return
+    elif not args.experiment:
+        return s, "subject", path
+
+    found = False
+    for e in s.experiments():
+        if exact_match(e, args.experiment):
+            path += "/experiments/" + e.id()
+            found = True
+            break
+    if not found:
+        return
+    elif not args.scan and not args.assessor:
+        return e, "experiment", path
+
+    found = False
+    if args.scan:
+        for s in e.scans():
+            if exact_match(s, args.scan):
+                path += "/scans/" + s.id()
+                found = True
+                s_type = "scan"
+                break
+    elif args.assessor:
+        for s in e.assessors():
+            if exact_match(s, args.assessor):
+                path += "/assessors/" + s.id()
+                found = True
+                s_type = "assessor"
+                break
+    if not found:
+        return
+    else:
+        return s, s_type, path
+
+def download_obj(obj, obj_type, args, path):
+    download_path = os.path.join(args.download, path, args.download_resource)
+    os.makedirs(download_path, exist_ok=True)
+    r = obj.resource(args.download_resource)
+
+    for idx, f in enumerate(r.files()):
+        if idx == 0:
+            print("Downloading files for %s: %s" % (obj_type, label(obj)))
+        f.get(os.path.join(download_path, label(f)))
+                         
+def print_obj(obj, obj_type, args, path):
+    prefixes = {
+        "project" : "", "subject" :  " - ", "experiment" : "  - ", "scan" : "   - ", "assessor" : "   - ",
+    }
+    print("%s%s: %s" % (prefixes[obj_type.lower()], obj_type, label(obj)))
+
+def do_list(conn, args, path="projects/", action=print_obj):
+    """
+    List matching projects, subject etc
+    """
+    projects = conn.select.projects()
+    for p in projects:
+        if matches(p, args.project, args):
+            ppath = path + label(p)
+            action(p, "project", args, ppath)
+            do_list_subjects(p, args, ppath + "/subjects/" , action)
+
+def do_list_subjects(proj, args, path, action):
+    subjects = proj.subjects()
+    for s in subjects:
+        if matches(s, args.subject, args):
+            opath = path + label(s)
+            action(s, "subject", args, opath)
+            do_list_experiments(s, args, opath + "/experiments/", action)
+
+def do_list_experiments(subj, args, path, action):
+    exps = subj.experiments()
+    for e in exps:
+        if matches(e, args.experiment, args):
+            opath = path + label(e)
+            action(e, "experiment", args, opath)
+            do_list_scans(e, args, opath + "/scans/", action)
+            do_list_assessors(e, args, opath + "/assessors/", action)
+
+def do_list_scans(exp, args, path, action):
+    scans = exp.scans()
+    for s in scans:
+        if matches(s, args.scan, args):
+            opath = path + label(s)
+            action(s, "scan", args, opath)
+
+def do_list_assessors(exp, args, path, action):
+    assessors = exp.assessors()
+    for a in assessors:
+        if matches(a, args.assessor, args):
+            opath = path + label(a)
+            action(a, "assessor", args, opath)
+
+def exact_match(obj, match_id):
+    return label(obj).lower() == match_id.lower() or obj.id().lower() == match_id.lower()
+
+def matches(obj, match_id, args):
     if match_id == "skip":
         return False
-    elif match_id is None:
+    elif not match_id:
         return True
 
     if args.match_files and os.path.exists(match_id):
@@ -217,7 +298,9 @@ def matches(child_id, match_id, args):
             match_id = fnmatch.translate(match_id)
 
         p = re.compile(match_id, re.IGNORECASE)
-        if p.match(child_id):
+        if p.match(obj.id()):
+            return True
+        elif p.match(label(obj)):
             return True
 
     return False
