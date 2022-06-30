@@ -153,6 +153,7 @@ def download_bids(obj, obj_type, args, path):
     bids_project = proj.label().replace("_", "").replace("-", "")
     bids_subject = "sub-" + subj.label().replace("_", "").replace("-", "")
     bids_session = "ses-" + exp.label().replace("_", "").replace("-", "")
+
     bidsdir = os.path.join(args.download, bids_project)
     outdir = os.path.join(bidsdir, bids_subject, bids_session)
     os.makedirs(outdir, exist_ok=True)
