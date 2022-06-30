@@ -232,7 +232,7 @@ def download_obj(obj, obj_type, args, path):
                          
 def print_obj(obj, obj_type, args, path):
     prefixes = {
-        "project" : "", "subject" :  " - ", "experiment" : "  - ", "scan" : "   - ", "assessor" : "   - ",
+        "project" : "", "subject" :  " - ", "session" : "  - ", "experiment" : "  - ", "scan" : "   - ", "assessor" : "   - ",
     }
     print("%s%s: %s" % (prefixes[obj_type.lower()], obj_type, label(obj)))
 
