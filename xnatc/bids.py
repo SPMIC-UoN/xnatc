@@ -53,9 +53,10 @@ def match_anat(fname, json_data):
         if fname.lower().endswith("_ph"):
             attrs["part"] = "phase"
 
-        echonum = get_echo_num(fname, json_data)
-        if echonum:
-            attrs["echo"] = echonum
+        #echonum = get_echo_num(fname, json_data)
+        #if echonum:
+        #    attrs["echo"] = echonum
+        return folder, suffix, attrs, md
 
 def match_func(fname, json_data):
     """
