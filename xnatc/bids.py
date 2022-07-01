@@ -226,10 +226,10 @@ def download_bids(obj, obj_type, args, path):
             if bids_match:
                 folder, suffix, attrs, md = bids_match
                 os.makedirs(os.path.join(outdir, folder), exist_ok=True)
-                handled_duplicates = False
+                mapped = False
                 for ext in EXTS:
                     src_fname = os.path.join(outdir, imgname + ext)
-                    while not handled_duplicates:
+                    while 1:
                         # Ugly code to avoid overwriting existing files with same name by adding the
                         # BIDS 'run' attribute to distinguish between them
                         bids_fname = "_".join(["%s-%s" % (k, v) for k, v in attrs.items()] + [suffix])
@@ -246,9 +246,11 @@ def download_bids(obj, obj_type, args, path):
                             else:
                                 attrs["run"] += 1
                         else:
-                            # Can now use the run attribute for all extensions
-                            print(f"Mapping {imgname} -> {folder} / {bids_fname}")
-                            handled_duplicates = True
+                            if not mapped:
+                                print(f"Mapping {imgname} -> {folder} / {bids_fname}")
+                                mapped = True
+                            attrs.pop("run", None)
+                            break
 
                     if os.path.exists(src_fname):
                         os.rename(src_fname, dest_fname)
