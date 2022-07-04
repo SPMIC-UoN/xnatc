@@ -154,7 +154,7 @@ def upload_file(conn, path, resource_type, fname, upload_name=None):
 
     if resource_type:
         path = "/data/%s/resources/%s/files/%s" % (path, resource_type, upload_name)
-        with open(fname, "r") as f:
+        with open(fname, "rb") as f:
             r = conn.put(path, files={"file" : f})
             if r.status_code != 200:
                 raise RuntimeError("Failed to upload resource file: %i" % r.status_code)
